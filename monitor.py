@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import subprocess
+import time
 import sys
 import urllib.request
 from zoneinfo import ZoneInfo
@@ -15,6 +16,8 @@ ACCOUNT_LABEL = os.environ.get("ACCOUNT_LABEL", "David").strip() or "David"
 ACCOUNT_SLUG = os.environ.get("ACCOUNT_SLUG", ACCOUNT_LABEL.lower()).strip().lower() or "david"
 STATUS_WORKER_URL = os.environ.get("STATUS_WORKER_URL", "").rstrip("/")
 STATUS_INGEST_TOKEN = os.environ.get("STATUS_INGEST_TOKEN", "").strip()
+RESET_ALIGN_LOOKAHEAD_SECONDS = int(os.environ.get("RESET_ALIGN_LOOKAHEAD_SECONDS", "330"))
+RESET_ALIGN_GRACE_SECONDS = int(os.environ.get("RESET_ALIGN_GRACE_SECONDS", "8"))
 
 
 def utc_now():
@@ -31,6 +34,38 @@ def load_json(path, default):
 def save_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def wait_for_predicted_reset(state):
+    now = time.time()
+    upcoming = []
+
+    for key in ("300", "10080"):
+        window = (state.get("windows") or {}).get(key) or {}
+        reset_at = window.get("resetsAt")
+        if reset_at is None:
+            continue
+        reset_at = float(reset_at)
+        seconds_until = reset_at - now
+        if 0 < seconds_until <= RESET_ALIGN_LOOKAHEAD_SECONDS:
+            upcoming.append((reset_at, window.get("label", key)))
+
+    if not upcoming:
+        return None
+
+    reset_at, label = min(upcoming, key=lambda item: item[0])
+    target = reset_at + RESET_ALIGN_GRACE_SECONDS
+    delay = target - time.time()
+    if delay > 0:
+        print(
+            f"Aligning Codex check to predicted {label} reset: "
+            f"sleeping {delay:.1f}s until {fmt_local(int(reset_at))} "
+            f"(+{RESET_ALIGN_GRACE_SECONDS}s grace)",
+            flush=True,
+        )
+        time.sleep(delay)
+
+    return {"label": label, "resetsAt": int(reset_at)}
 
 
 def read_usage():
@@ -152,6 +187,9 @@ def publish_status(windows, checked_at):
 
 
 def main():
+    state = load_json(STATE_PATH, {"version": 1, "windows": {}})
+    aligned_reset = wait_for_predicted_reset(state)
+
     payload = read_usage()
     snapshot = choose_snapshot(payload)
     windows = normalise_windows(snapshot)
@@ -159,7 +197,6 @@ def main():
         raise RuntimeError("Codex returned no primary/secondary usage windows")
 
     now = utc_now()
-    state = load_json(STATE_PATH, {"version": 1, "windows": {}})
     previous_windows = state.setdefault("windows", {})
     first_run = not previous_windows
     changed = False
@@ -222,6 +259,7 @@ def main():
         json.dumps(
             {
                 "account": ACCOUNT_LABEL,
+                "alignedReset": aligned_reset,
                 "firstRun": first_run,
                 "alertsSent": len(alerts),
                 "statusPublish": publish_result,
