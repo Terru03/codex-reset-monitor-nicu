@@ -1,0 +1,83 @@
+﻿name: Codex reset monitor
+
+on:
+  schedule:
+    - cron: "3-58/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-reset-monitor-nicu
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CODEX_HOME: /home/runner/.codex-reset-monitor-auth
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+      AUTH_FILE_KEY: ${{ secrets.AUTH_FILE_KEY }}
+      ACCOUNT_LABEL: Nicu
+      ACCOUNT_SLUG: nicu
+      STATUS_WORKER_URL: https://codex-reset-monitor.david-galdea.workers.dev
+      STATUS_INGEST_TOKEN: ${{ secrets.STATUS_INGEST_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Codex CLI
+        run: npm install --global @openai/codex@latest
+
+      - name: Restore isolated Codex authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CODEX_HOME"
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in secrets/auth.json.enc \
+            -out "$CODEX_HOME/auth.json" \
+            -pass env:AUTH_FILE_KEY
+          chmod 600 "$CODEX_HOME/auth.json"
+          sha256sum "$CODEX_HOME/auth.json" | awk '{print $1}' > /tmp/auth-before.sha
+
+      - name: Check Codex usage and notify Discord
+        run: python3 monitor.py
+
+      - name: Persist rotated Codex credentials and reset state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f "$CODEX_HOME/auth.json" ] && [ -f /tmp/auth-before.sha ]; then
+            before="$(cat /tmp/auth-before.sha)"
+            after="$(sha256sum "$CODEX_HOME/auth.json" | awk '{print $1}')"
+            if [ "$before" != "$after" ]; then
+              echo "Codex rotated its auth material; persisting encrypted replacement."
+              openssl enc -aes-256-cbc -pbkdf2 -salt \
+                -in "$CODEX_HOME/auth.json" \
+                -out secrets/auth.json.enc \
+                -pass env:AUTH_FILE_KEY
+            fi
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/reset-state.json secrets/auth.json.enc
+
+          if git diff --cached --quiet; then
+            echo "No persistent monitor changes."
+            exit 0
+          fi
+
+          git commit -m "Update Codex reset monitor state"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+

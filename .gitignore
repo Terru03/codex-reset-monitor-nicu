@@ -1,0 +1,3 @@
+auth.json
+*.decrypted
+__pycache__/
