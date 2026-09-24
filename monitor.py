@@ -186,10 +186,7 @@ def publish_status(windows, checked_at):
     return "published"
 
 
-def main():
-    state = load_json(STATE_PATH, {"version": 1, "windows": {}})
-    aligned_reset = wait_for_predicted_reset(state)
-
+def run_check(state, aligned_reset=None):
     payload = read_usage()
     snapshot = choose_snapshot(payload)
     windows = normalise_windows(snapshot)
@@ -255,20 +252,32 @@ def main():
         publish_result = "failed"
         print(f"WARNING: status publish failed: {exc}", file=sys.stderr)
 
-    print(
-        json.dumps(
-            {
-                "account": ACCOUNT_LABEL,
-                "alignedReset": aligned_reset,
-                "firstRun": first_run,
-                "alertsSent": len(alerts),
-                "statusPublish": publish_result,
-                "stateChanged": changed,
-                "windows": windows,
-            },
-            indent=2,
-        )
-    )
+    result = {
+        "account": ACCOUNT_LABEL,
+        "alignedReset": aligned_reset,
+        "firstRun": first_run,
+        "alertsSent": len(alerts),
+        "statusPublish": publish_result,
+        "stateChanged": changed,
+        "windows": windows,
+    }
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def main():
+    state = load_json(STATE_PATH, {"version": 1, "windows": {}})
+
+    aligned_reset = wait_for_predicted_reset(state)
+    run_check(state, aligned_reset)
+
+    # There are only two Codex windows we track. If the other window is also
+    # predicted to reset inside this same five-minute slot, wait for it too
+    # and perform a second exact check instead of leaving it for the next cron.
+    if aligned_reset is not None:
+        second_aligned_reset = wait_for_predicted_reset(state)
+        if second_aligned_reset is not None:
+            run_check(state, second_aligned_reset)
 
 
 if __name__ == "__main__":
