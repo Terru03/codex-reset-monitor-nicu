@@ -1,4 +1,4 @@
-﻿name: Codex reset monitor
+name: Codex reset monitor
 
 on:
   schedule:
