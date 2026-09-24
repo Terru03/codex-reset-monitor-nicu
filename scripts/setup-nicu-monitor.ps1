@@ -26,9 +26,16 @@ if (-not (Test-Path $Destination)) {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 }
 
-# Refresh monitor files from the working David repo while preserving Nicu's own Git metadata.
+$destinationHasGit = Test-Path (Join-Path $Destination ".git")
+$excludedTopLevel = @(".git", "discord-worker")
+if ($destinationHasGit) {
+    # On resume, keep Nicu's own reset state instead of copying David's state over it.
+    $excludedTopLevel += "state"
+}
+
+# Refresh monitor files from the working David repo while preserving Nicu-specific state.
 Get-ChildItem -LiteralPath $sourceRoot -Force |
-    Where-Object { $_.Name -notin @(".git", "discord-worker") } |
+    Where-Object { $_.Name -notin $excludedTopLevel } |
     ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
     }
@@ -41,7 +48,7 @@ $workflow = $workflow.Replace("group: codex-reset-monitor", "group: codex-reset-
 Set-Content -LiteralPath $workflowPath -Value $workflow -Encoding UTF8
 
 $statePath = Join-Path $Destination "state\reset-state.json"
-if (-not (Test-Path (Join-Path $Destination ".git"))) {
+if (-not $destinationHasGit) {
 @'
 {
   "version": 1,
@@ -167,10 +174,15 @@ if ($staged) {
     }
 }
 
-$repoExists = $false
-gh repo view $nicuRepo *> $null
-if ($LASTEXITCODE -eq 0) {
-    $repoExists = $true
+Write-Host "Checking whether $nicuRepo already exists..."
+cmd.exe /d /c "gh repo view $nicuRepo >nul 2>nul"
+$repoExists = ($LASTEXITCODE -eq 0)
+
+if ($repoExists) {
+    Write-Host "Nicu GitHub repository already exists."
+}
+else {
+    Write-Host "Nicu GitHub repository does not exist yet; it will be created."
 }
 
 if (-not $repoExists) {
