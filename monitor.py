@@ -180,6 +180,7 @@ def main():
             and previous_reset is not None
             and current_reset is not None
             and current_reset - previous_reset >= meaningful_advance
+            and float(window.get("usedPercent", 100.0)) <= 0.0
         ):
             alerts.append(window)
 
