@@ -215,20 +215,15 @@ def run_check(state, aligned_reset=None):
 
     for key, window in windows.items():
         current_reset = window.get("resetsAt")
+        current_used = float(window.get("usedPercent", 100.0))
         previous = previous_windows.get(key, {})
-        previous_reset = previous.get("resetsAt")
-
-        duration_mins = window.get("durationMins")
-        meaningful_advance = 300
-        if duration_mins:
-            meaningful_advance = max(300, int(float(duration_mins) * 60 * 0.25))
+        previous_used = previous.get("usedPercent")
 
         if (
             not first_run
-            and previous_reset is not None
-            and current_reset is not None
-            and current_reset - previous_reset >= meaningful_advance
-            and float(window.get("usedPercent", 100.0)) <= 0.0
+            and previous_used is not None
+            and float(previous_used) > 0.0
+            and current_used <= 0.0
         ):
             alerts.append(window)
 
@@ -236,6 +231,7 @@ def run_check(state, aligned_reset=None):
             "label": window["label"],
             "durationMins": window["durationMins"],
             "resetsAt": current_reset,
+            "usedPercent": current_used,
         }
         if previous != new_state:
             previous_windows[key] = new_state
