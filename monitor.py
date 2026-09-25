@@ -131,6 +131,19 @@ def usage_block(window):
     return f"{remaining:.0f}% remaining\nNext reset: **{fmt_local(window.get('resetsAt'))}**"
 
 
+def available_resets(windows):
+    available = []
+    five = windows.get("300")
+    weekly = windows.get("10080")
+
+    if five and float(five.get("usedPercent", 100.0)) <= 0.0:
+        available.append("5-hour")
+    if weekly and float(weekly.get("usedPercent", 100.0)) <= 0.0:
+        available.append("weekly")
+
+    return ", ".join(available) if available else "None"
+
+
 def discord_ping(trigger_window, windows):
     webhook = os.environ.get("DISCORD_WEBHOOK_URL")
     user_id = os.environ.get("DISCORD_USER_ID", "").strip()
@@ -142,6 +155,7 @@ def discord_ping(trigger_window, windows):
     weekly = windows.get("10080")
     content = (
         f"{mention}**Codex {trigger_window['label']} reset — {ACCOUNT_LABEL}**\n\n"
+        f"**Resets available:** {available_resets(windows)}\n\n"
         f"**5-hour:** {usage_block(five)}\n\n"
         f"**Weekly:** {usage_block(weekly)}"
     )
