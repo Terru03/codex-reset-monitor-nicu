@@ -31,7 +31,10 @@ jobs:
           fetch-depth: 0
 
       - name: Install Codex CLI
-        run: npm install --global @openai/codex@latest
+        shell: bash
+        run: |
+          npm install --global @openai/codex@latest || \
+          npm install --global @openai/codex@0.156.1
 
       - name: Restore isolated Codex authentication
         shell: bash
