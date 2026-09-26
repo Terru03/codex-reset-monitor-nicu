@@ -135,10 +135,15 @@ def available_resets(windows):
     available = []
     five = windows.get("300")
     weekly = windows.get("10080")
+    weekly_used = float(weekly.get("usedPercent", 100.0)) if weekly else 100.0
 
-    if five and float(five.get("usedPercent", 100.0)) <= 0.0:
+    if (
+        five
+        and float(five.get("usedPercent", 100.0)) <= 0.0
+        and weekly_used < 100.0
+    ):
         available.append("5-hour")
-    if weekly and float(weekly.get("usedPercent", 100.0)) <= 0.0:
+    if weekly and weekly_used <= 0.0:
         available.append("weekly")
 
     return ", ".join(available) if available else "None"
@@ -212,6 +217,8 @@ def run_check(state, aligned_reset=None):
     first_run = not previous_windows
     changed = False
     alerts = []
+    weekly = windows.get("10080")
+    weekly_used = float(weekly.get("usedPercent", 100.0)) if weekly else 100.0
 
     for key, window in windows.items():
         current_reset = window.get("resetsAt")
@@ -224,6 +231,7 @@ def run_check(state, aligned_reset=None):
             and previous_used is not None
             and float(previous_used) > 0.0
             and current_used <= 0.0
+            and not (key == "300" and weekly_used >= 100.0)
         ):
             alerts.append(window)
 
