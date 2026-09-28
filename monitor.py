@@ -69,15 +69,42 @@ def wait_for_predicted_reset(state):
 
 
 def read_usage():
-    proc = subprocess.run(
-        ["python3", str(ROOT / "scripts" / "read_codex_usage.py")],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=os.environ.copy(),
-    )
-    line = proc.stdout.strip().splitlines()[-1]
-    return json.loads(line)
+    last_error = None
+
+    for attempt in range(1, 4):
+        proc = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "read_codex_usage.py")],
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+
+        if proc.returncode == 0:
+            lines = proc.stdout.strip().splitlines()
+            if not lines:
+                last_error = "Codex usage reader exited successfully but returned no output"
+            else:
+                try:
+                    return json.loads(lines[-1])
+                except json.JSONDecodeError as exc:
+                    last_error = f"Codex usage reader returned invalid JSON: {exc}"
+        else:
+            stderr = proc.stderr.strip()
+            stdout = proc.stdout.strip()
+            detail = stderr or stdout or "no diagnostic output"
+            last_error = (
+                f"Codex usage reader failed with exit code {proc.returncode}: {detail}"
+            )
+
+        if attempt < 3:
+            print(
+                f"WARNING: Codex usage read attempt {attempt}/3 failed: {last_error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(5 * attempt)
+
+    raise RuntimeError(last_error or "Codex usage reader failed")
 
 
 def choose_snapshot(payload):
