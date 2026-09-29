@@ -1,19 +1,19 @@
 {
   "heartbeatAt": "2026-09-24T19:27:13.574957Z",
-  "lastCheckedAt": "2026-09-29T16:38:04.317165Z",
+  "lastCheckedAt": "2026-09-29T16:44:03.065103Z",
   "version": 1,
   "windows": {
     "10080": {
       "durationMins": 10080,
       "label": "weekly",
       "resetsAt": 1791049177,
-      "usedPercent": 96.0
+      "usedPercent": 97.0
     },
     "300": {
       "durationMins": 300,
       "label": "5-hour",
       "resetsAt": 1790717873,
-      "usedPercent": 11.0
+      "usedPercent": 15.0
     }
   }
 }
