@@ -33,8 +33,16 @@ jobs:
       - name: Install Codex CLI
         shell: bash
         run: |
-          npm install --global @openai/codex@latest || \
-          npm install --global @openai/codex@0.156.1
+          set -euo pipefail
+          npm install --global @openai/codex@latest || true
+
+          if ! codex --version >/dev/null 2>&1; then
+            echo "Latest Codex install is incomplete; falling back to 0.156.1."
+            npm uninstall --global @openai/codex || true
+            npm install --global @openai/codex@0.156.1
+          fi
+
+          codex --version
 
       - name: Restore isolated Codex authentication
         shell: bash
@@ -71,14 +79,33 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/reset-state.json secrets/auth.json.enc
 
-          if git diff --cached --quiet; then
-            echo "No persistent monitor changes."
-            exit 0
-          fi
+          cp state/reset-state.json /tmp/reset-state.json.current
+          cp secrets/auth.json.enc /tmp/auth.json.enc.current
 
-          git commit -m "Update Codex reset monitor state"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          for attempt in 1 2 3; do
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard "origin/${GITHUB_REF_NAME}"
+
+            cp /tmp/reset-state.json.current state/reset-state.json
+            cp /tmp/auth.json.enc.current secrets/auth.json.enc
+            git add state/reset-state.json secrets/auth.json.enc
+
+            if git diff --cached --quiet; then
+              echo "No persistent monitor changes."
+              exit 0
+            fi
+
+            git commit -m "Update Codex reset monitor state"
+
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+
+            echo "Push attempt ${attempt}/3 failed; refreshing remote state and retrying."
+            sleep $((attempt * 5))
+          done
+
+          echo "Failed to persist monitor state after 3 attempts."
+          exit 1
 
