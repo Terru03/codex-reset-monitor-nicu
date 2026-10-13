@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import datetime as dt
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -118,6 +119,12 @@ def normalise_windows(snapshot):
         window = snapshot.get(slot)
         if not window:
             continue
+        try:
+            used_percent = float(window["usedPercent"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid or missing usedPercent for {slot}") from exc
+        if not math.isfinite(used_percent):
+            raise ValueError(f"Non-finite usedPercent for {slot}")
         duration = window.get("windowDurationMins")
         if duration is None:
             key = slot
@@ -137,7 +144,7 @@ def normalise_windows(snapshot):
                 label = f"{duration}-minute"
         out[key] = {
             "label": label,
-            "usedPercent": float(window.get("usedPercent", 0)),
+            "usedPercent": used_percent,
             "resetsAt": int(window["resetsAt"]) if window.get("resetsAt") is not None else None,
             "durationMins": duration,
         }
@@ -241,6 +248,7 @@ def run_check(state, aligned_reset=None):
 
     now = utc_now()
     previous_windows = state.setdefault("windows", {})
+    pending_alerts = state.get("pendingAlerts", {})
     first_run = not previous_windows
     changed = False
     alerts = []
@@ -253,14 +261,18 @@ def run_check(state, aligned_reset=None):
         previous = previous_windows.get(key, {})
         previous_used = previous.get("usedPercent")
 
-        if (
+        should_alert = key in pending_alerts or (
             not first_run
             and previous_used is not None
             and float(previous_used) > 0.0
             and current_used <= 0.0
             and not (key == "300" and weekly_used >= 100.0)
-        ):
-            alerts.append(window)
+        )
+        if should_alert:
+            # Queue every detected reset before attempting any delivery.
+            pending_alerts.setdefault(key, window)
+            state["pendingAlerts"] = pending_alerts
+            changed = True
 
         new_state = {
             "label": window["label"],
@@ -268,9 +280,23 @@ def run_check(state, aligned_reset=None):
             "resetsAt": current_reset,
             "usedPercent": current_used,
         }
-        if previous != new_state:
+        if not should_alert and previous != new_state:
             previous_windows[key] = new_state
             changed = True
+
+    if pending_alerts:
+        # A failed alert can retry even if usage increases before the next
+        # check. Preserve both resets if delivery of the first one fails.
+        save_json(STATE_PATH, state)
+        for key in list(pending_alerts):
+            if key not in windows:
+                continue
+            discord_ping(pending_alerts[key], windows)
+            alerts.append(pending_alerts.pop(key))
+            previous_windows[key] = windows[key].copy()
+            changed = True
+            # A later delivery failure must not duplicate this successful one.
+            save_json(STATE_PATH, state)
 
     heartbeat = state.get("heartbeatAt")
     heartbeat_dt = None
@@ -286,9 +312,6 @@ def run_check(state, aligned_reset=None):
     state["lastCheckedAt"] = now.isoformat().replace("+00:00", "Z")
     if changed:
         save_json(STATE_PATH, state)
-
-    for window in alerts:
-        discord_ping(window, windows)
 
     publish_result = "disabled"
     try:
